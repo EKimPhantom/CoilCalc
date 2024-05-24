@@ -51,7 +51,7 @@ class Coil():
 
         return Signal(field.multipoles, phi, signal, self.w)
     
-    def curved_coil_signal(self, field: Field, t, curve, turn=0, delta=0):
+    def curved_coil_signal(self, field: Field, t, curve, turn=0, delta=0, mult=1):
 
         phi = {}
         length = self.L - turn * delta
@@ -69,11 +69,17 @@ class Coil():
                 phi_k +=  2*(width/2) ** (2*k + 1) * combinations(n, 2*k + 1) * integrate.quad(lambda x: curve(x) ** (n - 2*k - 1), turn * delta, length)[0] * (1 / (n * self.ref ** (n - 1)))
 
             phi[n]= phi_k
-            signal += phi_k * c * n * self.w *np.sin(n*self.w*t - n*a*np.ones_like(t))
+            signal += mult*phi_k * c * n * self.w *np.sin(n*self.w*t - n*a*np.ones_like(t))
         return Signal(field.multipoles, phi, signal, self.w)
     
     def sine_deformation(self, x, curvature=0.02):
         return curvature * (self.r1 - self.r2) * np.sin(np.pi*x/self.L)
+    
+    @staticmethod
+    def null_f(x):
+        return 0
+
+
 
 
 class Integration_coil(Coil):
@@ -82,7 +88,7 @@ class Integration_coil(Coil):
         self.num_turns = num_turns
         self.delta = delta
 
-    def small_coils_signal(self, field: Field, t):
+    def small_coils_signal(self, field: Field, t, curve=Coil.null_f):
         
         phi = {}
         signal = np.zeros_like(t)
@@ -92,13 +98,14 @@ class Integration_coil(Coil):
             n, c, a = n_pole[0], n_pole[1], n_pole[2]
             phi_k = 0
             for i in range(self.num_turns - 1):
-                phi_k -= (self.delta * self.ref/n) * (((width - self.delta * i)/(2 * self.ref)) ** n - ((width - self.delta * (i + 1))/(2 * self.ref)) ** n)
+                phi_k -= (self.delta * self.ref/n) * (((width - self.delta * i + curve(self.delta * i))/(2 * self.ref)) ** n - ((width - self.delta * (i + 1) + curve(self.delta * i))/(2 * self.ref)) ** n)
             phi[n]= phi_k
             signal += phi_k * c * n * self.w *np.sin(n*self.w*t - n*a*np.ones_like(t))
 
         return Signal(field.multipoles, phi, signal, self.w)
     
     def get_signal(self, field: Field, t):
+
         result = self.small_coils_signal(field, t)
         for n in range(self.num_turns):
             if n < self.num_turns -1:
@@ -108,7 +115,40 @@ class Integration_coil(Coil):
 
         return result
 
-def combinations(n, k):
+    def get_signal_curved(self, field: Field, t, curve):
+
+        result = self.small_coils_signal(field, t, curve=curve)
+        for n in range(self.num_turns):
+            if n < self.num_turns -1:
+                result+= self.curved_coil_signal(field, t, curve, turn=n, delta=self.delta, mult=2)
+            else:
+                result+= self.curved_coil_signal(field, t, curve, turn=n, delta=self.delta)
+
+        return result
+
+    def get_signal_simpified(self, field: Field, t):
+        phi = {}
+        signal = np.zeros_like(t)
+        width = abs(self.r1 - self.r2)
+        for n_pole in field.multipoles:
+
+            n, c, a = n_pole[0], n_pole[1], n_pole[2]
+            phi_k = 0
+
+            if n%2 == 1:
+                phi_k += 2 * ((self.L - 2 * self.num_turns * self.delta) * self.ref / n * ((width - 2 * self.num_turns * self.delta)/self.ref)**n)
+                for i in range(0,n-1,1):
+                    phi_k += 4 * ((self.L - 2 * i * self.delta) * self.ref / n * ((width - 2 * i * self.delta)/self.ref)**n)
+
+            for i in range(0,n - 1,1):
+                phi_k -= (self.delta ** 2) / n * ((width - 2 * i * self.delta)/(2 * self.ref)) ** (n - 1)
+            
+            phi[n] = phi_k
+
+            signal += phi_k * c * n * self.w *np.sin(n*self.w*t - n*a*np.ones_like(t))
+        return Signal(field.multipoles, phi, signal, self.w)
+    
+def combinations(n, k): 
     if 0 <= k <= n:
         nn = 1
         kk = 1
